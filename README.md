@@ -40,6 +40,13 @@ The plugin adds an `etcd` tool window with a connection picker and the **Keys** 
 - Create and delete keys, delete a whole prefix, and export a prefix to JSON.
 - Filter the tree by prefix.
 
+The toolbar carries **Connect**, **Disconnect**, **Connections…** (the settings page) and
+**About**, which opens the author's GitHub page. Reading that URL from the plugin descriptor at
+runtime is not an option — every API for it (`PluginManagerCore.getPlugin`,
+`PluginManager.getPluginByClass`) is marked internal as of build 262, and internal-API usage
+fails the Plugin Verifier — so it is a constant that a test keeps equal to `<vendor url>` in
+`plugin.xml`.
+
 Only the Keys section ships today. Watch, Leases, Cluster and Auth are deferred — see
 [Deferred sections](#deferred-sections) for what they would do and what already exists to
 build them on.

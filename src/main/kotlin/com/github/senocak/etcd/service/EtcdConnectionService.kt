@@ -15,9 +15,12 @@ import com.intellij.util.messages.Topic
 /**
  * Holds the project's single active etcd connection.
  *
- * The tool window tabs never build clients themselves; they read [client] and listen on
- * [TOPIC] so that connecting, disconnecting and reconnecting all flow through one place. The
- * client is closed with the project, which also stops any watch streams it opened.
+ * The tool window sections never build clients themselves; they read [client] and listen on
+ * [TOPIC], so connecting and disconnecting both flow through one place. The client is closed
+ * with the project, which also stops any watch streams it opened.
+ *
+ * There is no reconnect: disconnecting and connecting again does the same thing, and picks up
+ * edited settings on the way because the picker is repopulated when the settings dialog closes.
  */
 @Service(Service.Level.PROJECT)
 class EtcdConnectionService(private val project: Project) : Disposable {
@@ -60,17 +63,6 @@ class EtcdConnectionService(private val project: Project) : Disposable {
         if (client == null) return
         closeCurrent()
         publish(null)
-    }
-
-    /**
-     * Reconnects to the current endpoint, picking up edited settings.
-     *
-     * Returns null when there is nothing connected, or when the connection was deleted meanwhile.
-     */
-    fun reconnect(): EtcdClient? {
-        val current = client?.connection ?: return null
-        val latest = EtcdSettingsState.getInstance().findById(current.id) ?: return null
-        return connect(latest)
     }
 
     private fun closeCurrent() {

@@ -29,22 +29,12 @@ class EtcdSettingsState : PersistentStateComponent<EtcdSettingsState> {
         XmlSerializerUtil.copyBean(state, this)
     }
 
-    fun findById(id: String): EtcdConnection? = connections.firstOrNull { it.id == id }
-
-    /** Adds a new connection, or replaces the existing one carrying the same id. */
-    fun addOrUpdate(connection: EtcdConnection) {
-        val index = connections.indexOfFirst { it.id == connection.id }
-        if (index >= 0) connections[index] = connection else connections.add(connection)
-    }
-
-    /** Removes a connection and discards its stored password. */
-    fun remove(connection: EtcdConnection) {
-        connections.removeIf { it.id == connection.id }
-        EtcdCredentials.forget(connection.id)
-        if (lastUsedConnectionId == connection.id) lastUsedConnectionId = ""
-    }
-
-    /** Replaces the whole list, forgetting passwords for connections that were dropped. */
+    /**
+     * Replaces the whole list, forgetting passwords for connections that were dropped.
+     *
+     * The settings page edits a working copy and commits it in one go, so this is the only
+     * mutator the list needs.
+     */
     fun replaceAll(updated: List<EtcdConnection>) {
         val survivingIds = updated.mapTo(HashSet()) { it.id }
         connections.filterNot { it.id in survivingIds }.forEach { EtcdCredentials.forget(it.id) }

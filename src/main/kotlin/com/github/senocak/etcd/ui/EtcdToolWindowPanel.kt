@@ -8,6 +8,7 @@ import com.github.senocak.etcd.settings.EtcdConnection
 import com.github.senocak.etcd.settings.EtcdSettingsState
 import com.github.senocak.etcd.ui.kv.EtcdKvPanel
 import com.intellij.icons.AllIcons
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -46,8 +47,21 @@ class EtcdToolWindowPanel(private val project: Project) :
 
     private val connectButton = EtcdUiUtil.button("Connect", AllIcons.Actions.Execute) { connect() }
     private val disconnectButton = EtcdUiUtil.button("Disconnect", AllIcons.Actions.Suspend) { disconnect() }
-    private val refreshButton = EtcdUiUtil.button("Reconnect", AllIcons.Actions.Refresh) { reconnect() }
     private val settingsButton = EtcdUiUtil.button("Connections…", AllIcons.General.Settings) { openSettings() }
+
+    /**
+     * Where the About button goes.
+     *
+     * Deliberately a constant rather than a lookup of this plugin's own descriptor: every API
+     * for that (`PluginManagerCore.getPlugin`, `PluginManager.getPluginByClass`) is marked
+     * internal as of 262, and internal-API usage fails the Plugin Verifier. `EtcdPluginWiringTest`
+     * asserts this stays equal to `<vendor url>` in plugin.xml instead.
+     */
+    internal val vendorUrl: String = VENDOR_URL
+
+    private val aboutButton = EtcdUiUtil.button("About", AllIcons.Vcs.Vendors.Github) {
+        BrowserUtil.browse(vendorUrl)
+    }.apply { toolTipText = vendorUrl }
     private val statusLabel = JBLabel(NOT_CONNECTED).apply {
         foreground = JBUI.CurrentTheme.Label.disabledForeground()
     }
@@ -62,8 +76,8 @@ class EtcdToolWindowPanel(private val project: Project) :
             connectionCombo,
             connectButton,
             disconnectButton,
-            refreshButton,
             settingsButton,
+            aboutButton,
             statusLabel,
         )
         // A single section needs no tab strip; add one back when a second section arrives.
@@ -127,10 +141,6 @@ class EtcdToolWindowPanel(private val project: Project) :
         EtcdTasks.run(project, "Disconnecting from etcd", { service.disconnect() })
     }
 
-    private fun reconnect() {
-        EtcdTasks.run(project, "Reconnecting to etcd", { service.reconnect() })
-    }
-
     private fun openSettings() {
         ShowSettingsUtil.getInstance().showSettingsDialog(project, EtcdConfigurable::class.java)
         reloadConnections()
@@ -156,7 +166,7 @@ class EtcdToolWindowPanel(private val project: Project) :
         val hasSelection = connectionCombo.selectedItem != null
         connectButton.isEnabled = hasSelection && !connected
         disconnectButton.isEnabled = connected
-        refreshButton.isEnabled = connected
+        // Switching endpoints goes through Disconnect first, so the picker locks while connected.
         connectionCombo.isEnabled = !connected
     }
 
@@ -172,5 +182,8 @@ class EtcdToolWindowPanel(private val project: Project) :
 
     private companion object {
         const val NOT_CONNECTED = "Not connected"
+
+        /** Must match `<vendor url>` in plugin.xml; a test enforces that. */
+        const val VENDOR_URL = "https://github.com/senocak"
     }
 }

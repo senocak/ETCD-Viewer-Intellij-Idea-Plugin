@@ -31,7 +31,7 @@ class EtcdPluginWiringTest : BasePlatformTestCase() {
         assertNull(service.client)
         // Disconnecting when nothing is connected must be a no-op rather than an error.
         service.disconnect()
-        assertNull(service.reconnect())
+        assertFalse(service.isConnected)
     }
 
     fun `test settings service is registered`() {
@@ -86,6 +86,23 @@ class EtcdPluginWiringTest : BasePlatformTestCase() {
         val field = BasicTreeUI::class.java.getDeclaredField("currentCellRenderer")
         field.isAccessible = true
         return field.get(tree.ui)
+    }
+
+    fun `test the about button agrees with the vendor url in plugin xml`() {
+        val descriptor = javaClass.getResource("/META-INF/plugin.xml")?.readText()
+        assertNotNull("plugin.xml should be on the test classpath", descriptor)
+        val declared = Regex("""<vendor[^>]*\burl="([^"]+)"""").find(descriptor!!)?.groupValues?.get(1)
+        assertNotNull("plugin.xml should declare a vendor url", declared)
+
+        val panel = EtcdToolWindowPanel(project)
+        try {
+            // The button cannot read the descriptor at runtime — every API for that is internal
+            // as of 262 — so this is what keeps the constant and plugin.xml from drifting apart.
+            assertEquals(declared, panel.vendorUrl)
+            assertEquals("https://github.com/senocak", panel.vendorUrl)
+        } finally {
+            panel.dispose()
+        }
     }
 
     fun `test settings configurable builds`() {
