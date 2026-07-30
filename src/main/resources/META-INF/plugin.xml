@@ -1,0 +1,50 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>com.github.senocak.etcd</id>
+
+    <name>etcd</name>
+
+    <vendor url="https://github.com/senocak">senocak</vendor>
+
+    <description><![CDATA[
+        Browse and edit an <a href="https://etcd.io">etcd</a> v3 cluster from inside the IDE.
+
+        <ul>
+          <li><b>Keys</b> — browse the key space as a tree, read and edit values with syntax
+              highlighting, create and delete keys, and delete or export a whole prefix.</li>
+          <li><b>Watch</b> — stream live PUT and DELETE events for a key or prefix.</li>
+          <li><b>Leases</b> — grant, renew, inspect and revoke leases, with the keys attached
+              to each one.</li>
+          <li><b>Cluster</b> — member list, endpoint status, alarms, compaction and
+              defragmentation.</li>
+          <li><b>Auth</b> — manage users, roles and permissions, and toggle authentication.</li>
+        </ul>
+
+        Connects over etcd's v3 gRPC-gateway (HTTP/JSON), supporting anonymous access,
+        username/password authentication, TLS with a custom CA, and client certificates (mTLS).
+        The plugin bundles no third-party libraries.
+        ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <resource-bundle>messages.EtcdBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="etcd"
+                    factoryClass="com.github.senocak.etcd.ui.EtcdToolWindowFactory"
+                    anchor="bottom"
+                    icon="AllIcons.Nodes.DataSchema"/>
+
+        <applicationService serviceImplementation="com.github.senocak.etcd.settings.EtcdSettingsState"/>
+
+        <projectService serviceImplementation="com.github.senocak.etcd.service.EtcdConnectionService"/>
+
+        <applicationConfigurable parentId="tools"
+                                 instance="com.github.senocak.etcd.settings.EtcdConfigurable"
+                                 id="com.github.senocak.etcd.settings.EtcdConfigurable"
+                                 displayName="etcd"/>
+
+        <notificationGroup id="etcd" displayType="BALLOON"/>
+    </extensions>
+
+</idea-plugin>

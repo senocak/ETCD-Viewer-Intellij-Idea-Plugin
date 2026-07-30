@@ -1,0 +1,91 @@
+package com.github.senocak.etcd.service
+
+import com.github.senocak.etcd.client.EtcdClient
+import com.github.senocak.etcd.settings.EtcdConnection
+import com.github.senocak.etcd.settings.EtcdCredentials
+import com.github.senocak.etcd.settings.EtcdSettingsState
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
+import com.intellij.openapi.project.Project
+import com.intellij.util.messages.Topic
+
+/**
+ * Holds the project's single active etcd connection.
+ *
+ * The tool window tabs never build clients themselves; they read [client] and listen on
+ * [TOPIC] so that connecting, disconnecting and reconnecting all flow through one place. The
+ * client is closed with the project, which also stops any watch streams it opened.
+ */
+@Service(Service.Level.PROJECT)
+class EtcdConnectionService(private val project: Project) : Disposable {
+
+    interface Listener {
+        /** [client] is null when the connection was dropped. */
+        fun connectionChanged(client: EtcdClient?)
+    }
+
+    @Volatile
+    var client: EtcdClient? = null
+        private set
+
+    val connection: EtcdConnection? get() = client?.connection
+
+    val isConnected: Boolean get() = client != null
+
+    /**
+     * Opens a connection and verifies it by asking etcd for its status.
+     *
+     * Blocking — call it from a background thread. Any previous connection is closed first, so
+     * switching endpoints never leaves an orphaned client or watch behind.
+     */
+    fun connect(target: EtcdConnection): EtcdClient {
+        closeCurrent()
+        val newClient = EtcdClient(target.copy()) { EtcdCredentials.getPassword(target.id) }
+        try {
+            newClient.testConnection()
+        } catch (e: Exception) {
+            newClient.close()
+            throw e
+        }
+        client = newClient
+        EtcdSettingsState.getInstance().lastUsedConnectionId = target.id
+        publish(newClient)
+        return newClient
+    }
+
+    fun disconnect() {
+        if (client == null) return
+        closeCurrent()
+        publish(null)
+    }
+
+    /**
+     * Reconnects to the current endpoint, picking up edited settings.
+     *
+     * Returns null when there is nothing connected, or when the connection was deleted meanwhile.
+     */
+    fun reconnect(): EtcdClient? {
+        val current = client?.connection ?: return null
+        val latest = EtcdSettingsState.getInstance().findById(current.id) ?: return null
+        return connect(latest)
+    }
+
+    private fun closeCurrent() {
+        client?.let { runCatching { it.close() } }
+        client = null
+    }
+
+    private fun publish(newClient: EtcdClient?) {
+        if (project.isDisposed) return
+        project.messageBus.syncPublisher(TOPIC).connectionChanged(newClient)
+    }
+
+    override fun dispose() = closeCurrent()
+
+    companion object {
+        val TOPIC: Topic<Listener> = Topic.create("etcd connection", Listener::class.java)
+
+        fun getInstance(project: Project): EtcdConnectionService = project.service()
+    }
+}
