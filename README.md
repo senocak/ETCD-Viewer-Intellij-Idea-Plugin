@@ -33,15 +33,32 @@ without leaving the IDE.
 
 ## Functionality
 
-The plugin adds an `etcd` tool window with a connection picker and five tabs:
+The plugin adds an `etcd` tool window with a connection picker and the **Keys** browser:
 
-| Tab         | What it does                                                                                                  |
-|-------------|---------------------------------------------------------------------------------------------------------------|
-| **Keys**    | Browse the key space as a lazily-loaded prefix tree; read, edit, create and delete keys; delete or export a prefix |
-| **Watch**   | Stream live PUT/DELETE events for a key or prefix                                                             |
-| **Leases**  | Grant, renew, inspect and revoke leases, with the keys attached to each                                       |
-| **Cluster** | Member list, endpoint status, alarms, compaction and defragmentation                                          |
-| **Auth**    | Manage users, roles and permissions; enable or disable authentication                                         |
+- Browse the key space as a lazily-loaded prefix tree, split on a configurable separator.
+- Read and edit values, with JSON highlighting and Raw / Base64 / Hex views for binary data.
+- Create and delete keys, delete a whole prefix, and export a prefix to JSON.
+- Filter the tree by prefix.
+
+Only the Keys section ships today. Watch, Leases, Cluster and Auth are deferred — see
+[Deferred sections](#deferred-sections) for what they would do and what already exists to
+build them on.
+
+### Live updates
+
+The Keys tab watches the prefix you are browsing and folds changes in as they happen, so a key
+added or removed by `etcdctl`, by another application, or by an expiring lease shows up without
+a manual refresh. Updates are applied incrementally rather than by refetching, so a change
+elsewhere in the key space does not collapse the folder you are working in.
+
+Folders that have not been expanded yet are deliberately left untouched — their contents are
+fetched when you open them — so a busy key space cannot pull the whole store into memory.
+
+Turn it off with the **Live updates** toggle if you are pointed at a very high-churn cluster;
+**Refresh** then brings the tree up to date on demand, preserving which folders are open.
+
+If a value you are editing changes underneath you, the editor never discards your edit: it
+shows a warning instead, and saving still goes through the compare-and-set check.
 
 Saving a value uses a compare-and-set on the key's mod revision, so a save never silently
 overwrites a change someone else made since the value was loaded. Destructive operations —
@@ -50,6 +67,62 @@ first, and a prefix delete tells you how many keys it matched before you commit.
 
 Connections are configured under **Settings → Tools → etcd**, or via the `Connections…` button
 in the tool window. Passwords are stored in the IDE's PasswordSafe, never in the settings file.
+
+## Deferred sections
+
+Four further sections were built and then pulled back out to keep the first version focused on
+CRUD. **Their client-side APIs remain in the codebase and are covered by integration tests
+against a real cluster**, so re-adding one is a UI job rather than a protocol job.
+
+### What is already in place
+
+| Section     | Client API (ready, tested)                | What is missing              |
+|-------------|-------------------------------------------|------------------------------|
+| **Watch**   | `EtcdWatchStream` — in active use by live updates | An event-log panel    |
+| **Leases**  | `EtcdLeaseApi` — grant / revoke / timeToLive / keepAlive / list | A table panel |
+| **Cluster** | `EtcdClusterApi` — member add/remove/update/promote, status, alarms, defragment, hashKv; `EtcdKvApi.compact` | A members + status panel |
+| **Auth**    | `EtcdAuthApi` — users, roles, permissions, enable/disable | A users + roles panel |
+
+`EtcdClusterApi.status()` and `memberList()` are already called by `EtcdClient.testConnection()`
+and the connection dialog's **Test Connection**, so that API is live code, not dormant.
+
+### How to add a section back
+
+1. Write the panel under `src/main/kotlin/com/github/senocak/etcd/ui/<name>/`, implementing
+   [`EtcdTab`](src/main/kotlin/com/github/senocak/etcd/ui/EtcdTab.kt): `title`, `component`,
+   `onConnectionChanged(client)` and optionally `onActivated()`.
+2. Add it to `sections` in
+   [`EtcdToolWindowPanel`](src/main/kotlin/com/github/senocak/etcd/ui/EtcdToolWindowPanel.kt) and
+   restore the `JBTabbedPane` there — with one section the panel is currently shown directly.
+3. Run every etcd call through `EtcdTasks.run(project, title, work, onSuccess)`. **Nothing in
+   `client/` may be called from the EDT** — each call is a blocking HTTP round trip.
+4. Put destructive actions behind `EtcdUiUtil.confirmDestructive(project, title, message)`.
+
+Two helpers were deleted along with the panels and would need reinstating:
+`formatBytes` (cluster DB size), `formatTtl` (lease TTLs) and `preview` (truncating a value for
+a table cell) in `EtcdUiUtil`.
+
+### Notes per section
+
+**Watch** — a panel over `EtcdClient.watch(prefix, watchPrefix, listener)`. Events arrive on the
+stream's own reader thread, so every table update must hop to the EDT. Bound the row count; a
+busy cluster produces events faster than anyone can read them. Note the Keys section already
+runs its own watch, so a second one here is independent and that is fine — etcd supports many.
+
+**Leases** — `EtcdLeaseApi.list()` costs one `timetolive` call per lease, because
+`/v3/lease/leases` returns only ids. Lease ids are *unsigned* 64-bit: render them with
+`java.lang.Long.toUnsignedString`, never as a signed long. Revoking a lease deletes every key
+attached to it, so name the count in the confirmation.
+
+**Cluster** — removing a voting member can break quorum; say so in the confirmation and prefer
+adding members as learners. Compaction is irreversible and breaks watches that start from a
+compacted revision. Defragmentation blocks the member while it runs.
+
+**Auth** — etcd's auth API is inconsistent about parameter names (`name` vs `user` vs `role` for
+the same thing); `EtcdAuthApi` follows `rpc.proto` exactly and should not be "tidied up".
+Enabling auth locks out anonymous clients immediately, so warn that the connection needs
+credentials saved first or access is lost. `PermissionType.READ` is enum value 0 and is
+therefore omitted from responses — absent means READ.
 
 ### How it connects
 

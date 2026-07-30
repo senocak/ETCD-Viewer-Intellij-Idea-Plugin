@@ -55,8 +55,37 @@ class KeyUtilTest {
 
     @Test
     fun `child segment distinguishes folders from keys`() {
-        assertEquals("nodes" to true, KeyUtil.childSegment("/app/", "/app/nodes/node-1", "/"))
-        assertEquals("name" to false, KeyUtil.childSegment("/app/", "/app/name", "/"))
+        val folder = KeyUtil.childSegment("/app/", "/app/nodes/node-1", "/")!!
+        assertEquals("nodes", folder.name)
+        assertTrue(folder.isFolder)
+        // The child prefix keeps its trailing separator so it works as a range prefix.
+        assertEquals("/app/nodes/", folder.childPrefix)
+
+        val leaf = KeyUtil.childSegment("/app/", "/app/name", "/")!!
+        assertEquals("name", leaf.name)
+        assertFalse(leaf.isFolder)
+        assertEquals("/app/name", leaf.childPrefix)
+    }
+
+    @Test
+    fun `child segment skips the leading separator at the root`() {
+        // etcd keys conventionally start with '/'. Without skipping it, the root of the tree
+        // gains an unnamed folder standing for that slash.
+        val segment = KeyUtil.childSegment("", "/app/config/db", "/")!!
+        assertEquals("app", segment.name)
+        assertTrue(segment.isFolder)
+        assertEquals("/app/", segment.childPrefix)
+
+        val leafAtRoot = KeyUtil.childSegment("", "/single", "/")!!
+        assertEquals("single", leafAtRoot.name)
+        assertFalse(leafAtRoot.isFolder)
+    }
+
+    @Test
+    fun `child segment handles keys without a leading separator`() {
+        val segment = KeyUtil.childSegment("", "app/config", "/")!!
+        assertEquals("app", segment.name)
+        assertEquals("app/", segment.childPrefix)
     }
 
     @Test
@@ -64,6 +93,8 @@ class KeyUtilTest {
         assertNull(KeyUtil.childSegment("/app/", "/other/key", "/"))
         // A key equal to the prefix has no child segment.
         assertNull(KeyUtil.childSegment("/app/", "/app/", "/"))
+        // Nor does one that is only separators beyond the prefix.
+        assertNull(KeyUtil.childSegment("/app", "/app/", "/"))
     }
 
     @Test

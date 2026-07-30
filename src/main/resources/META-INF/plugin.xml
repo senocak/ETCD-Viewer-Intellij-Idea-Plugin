@@ -7,17 +7,16 @@
     <vendor url="https://github.com/senocak">senocak</vendor>
 
     <description><![CDATA[
-        Browse and edit an <a href="https://etcd.io">etcd</a> v3 cluster from inside the IDE.
+        Browse and edit an <a href="https://etcd.io">etcd</a> v3 key space from inside the IDE.
 
         <ul>
-          <li><b>Keys</b> — browse the key space as a tree, read and edit values with syntax
-              highlighting, create and delete keys, and delete or export a whole prefix.</li>
-          <li><b>Watch</b> — stream live PUT and DELETE events for a key or prefix.</li>
-          <li><b>Leases</b> — grant, renew, inspect and revoke leases, with the keys attached
-              to each one.</li>
-          <li><b>Cluster</b> — member list, endpoint status, alarms, compaction and
-              defragmentation.</li>
-          <li><b>Auth</b> — manage users, roles and permissions, and toggle authentication.</li>
+          <li>Browse the key space as a lazily-loaded prefix tree.</li>
+          <li>Read and edit values, with JSON highlighting and Raw / Base64 / Hex views for
+              binary data.</li>
+          <li>Create and delete keys, delete a whole prefix, and export a prefix to JSON.</li>
+          <li>Live updates: keys added or removed by another client appear automatically.</li>
+          <li>Saves are guarded by a compare-and-set on the key's revision, so concurrent
+              edits are never silently overwritten.</li>
         </ul>
 
         Connects over etcd's v3 gRPC-gateway (HTTP/JSON), supporting anonymous access,

@@ -6,28 +6,27 @@ import com.github.senocak.etcd.service.EtcdTasks
 import com.github.senocak.etcd.settings.EtcdConfigurable
 import com.github.senocak.etcd.settings.EtcdConnection
 import com.github.senocak.etcd.settings.EtcdSettingsState
-import com.github.senocak.etcd.ui.auth.EtcdAuthPanel
-import com.github.senocak.etcd.ui.cluster.EtcdClusterPanel
 import com.github.senocak.etcd.ui.kv.EtcdKvPanel
-import com.github.senocak.etcd.ui.lease.EtcdLeasePanel
-import com.github.senocak.etcd.ui.watch.EtcdWatchPanel
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTabbedPane
-import com.intellij.openapi.ui.ComboBox
 import com.intellij.util.ui.JBUI
 import javax.swing.DefaultComboBoxModel
 
 /**
- * The etcd tool window: a connection picker on top, one tab per feature area below.
+ * The etcd tool window: a connection picker on top, the Keys browser below.
  *
- * Owns the wiring between [EtcdConnectionService] and the tabs — tabs never connect on their own,
- * they just react to [EtcdTab.onConnectionChanged].
+ * Only the Keys section ships today. Further sections (Watch, Leases, Cluster, Auth) are
+ * described in the README; each would implement [EtcdTab], join [sections], and the single
+ * component below would go back to being a `JBTabbedPane`.
+ *
+ * Owns the wiring between [EtcdConnectionService] and the sections — a section never connects on
+ * its own, it just reacts to [EtcdTab.onConnectionChanged].
  */
 class EtcdToolWindowPanel(private val project: Project) :
     SimpleToolWindowPanel(true, true), Disposable {
@@ -36,6 +35,9 @@ class EtcdToolWindowPanel(private val project: Project) :
 
     private val connectionModel = DefaultComboBoxModel<EtcdConnection>()
     private val connectionCombo = ComboBox(connectionModel).apply {
+        // SimpleListCellRenderer is deprecated in 262, but its replacement
+        // (dsl.listCellRenderer.textListCellRenderer) is still internal API in 253/261, and
+        // internal-API usage fails the Plugin Verifier outright. Deprecated-but-public wins.
         renderer = SimpleListCellRenderer.create { label, value, _ ->
             label.text = value?.toString() ?: "<no connections configured>"
         }
@@ -51,16 +53,8 @@ class EtcdToolWindowPanel(private val project: Project) :
     }
 
     private val kvPanel = EtcdKvPanel(project)
-    private val watchPanel = EtcdWatchPanel(project)
-    private val leasePanel = EtcdLeasePanel(project)
-    private val clusterPanel = EtcdClusterPanel(project)
-    private val authPanel = EtcdAuthPanel(project)
 
-    private val tabs: List<EtcdTab> = listOf(kvPanel, watchPanel, leasePanel, clusterPanel, authPanel)
-
-    private val tabbedPane = JBTabbedPane().apply {
-        tabs.forEach { addTab(it.title, it.component) }
-    }
+    private val sections: List<EtcdTab> = listOf(kvPanel)
 
     init {
         toolbar = EtcdUiUtil.toolbar(
@@ -72,12 +66,8 @@ class EtcdToolWindowPanel(private val project: Project) :
             settingsButton,
             statusLabel,
         )
-        setContent(tabbedPane)
-
-        tabbedPane.addChangeListener { tabs.getOrNull(tabbedPane.selectedIndex)?.onActivated() }
-
-        // A watched change can invalidate what the Keys tab is showing.
-        watchPanel.onKeySpaceChanged = { kvPanel.refresh() }
+        // A single section needs no tab strip; add one back when a second section arrives.
+        setContent(kvPanel.component)
 
         // Another window (or the settings page) may change the connection; stay in sync.
         project.messageBus.connect(this).subscribe(
@@ -126,7 +116,16 @@ class EtcdToolWindowPanel(private val project: Project) :
         )
     }
 
-    private fun disconnect() = service.disconnect()
+    /**
+     * Disconnects on a background thread.
+     *
+     * Closing the client stops its watches and then closes the HTTP client, which blocks until
+     * in-flight requests finish — not something to do on the EDT.
+     */
+    private fun disconnect() {
+        disconnectButton.isEnabled = false
+        EtcdTasks.run(project, "Disconnecting from etcd", { service.disconnect() })
+    }
 
     private fun reconnect() {
         EtcdTasks.run(project, "Reconnecting to etcd", { service.reconnect() })
@@ -148,8 +147,8 @@ class EtcdToolWindowPanel(private val project: Project) :
                 ?.let { connectionCombo.selectedItem = it }
         }
         updateButtons()
-        tabs.forEach { it.onConnectionChanged(client) }
-        if (client != null) tabs.getOrNull(tabbedPane.selectedIndex)?.onActivated()
+        sections.forEach { it.onConnectionChanged(client) }
+        if (client != null) sections.forEach { it.onActivated() }
     }
 
     private fun updateButtons() {
@@ -161,7 +160,15 @@ class EtcdToolWindowPanel(private val project: Project) :
         connectionCombo.isEnabled = !connected
     }
 
-    override fun dispose() = Unit
+    /**
+     * Closing the tool window must stop the watch the Keys section opened.
+     *
+     * Handing the sections a null connection is exactly the teardown they already do on
+     * disconnect, so there is no second code path to keep in step.
+     */
+    override fun dispose() {
+        sections.forEach { runCatching { it.onConnectionChanged(null) } }
+    }
 
     private companion object {
         const val NOT_CONNECTED = "Not connected"

@@ -1,11 +1,17 @@
 package com.github.senocak.etcd.ui.kv
 
 import com.github.senocak.etcd.client.EtcdClient
+import com.github.senocak.etcd.client.EtcdException
+import com.github.senocak.etcd.client.EtcdWatchStream
 import com.github.senocak.etcd.json.Json
+import com.github.senocak.etcd.model.WatchEvent
+import com.github.senocak.etcd.model.WatchEventType
 import com.github.senocak.etcd.service.EtcdTasks
 import com.github.senocak.etcd.ui.EtcdTab
 import com.github.senocak.etcd.ui.EtcdUiUtil
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.project.Project
@@ -13,6 +19,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.SearchTextField
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -39,7 +46,8 @@ class EtcdKvPanel(private val project: Project) : JPanel(BorderLayout()), EtcdTa
 
     private val editorPanel = EtcdValueEditorPanel(project)
 
-    private val tree = EtcdKeyTree(project) { key -> editorPanel.showKey(key) }
+    /** Internal rather than private so tests can assert what the live watch put on screen. */
+    internal val tree = EtcdKeyTree(project) { key -> editorPanel.showKey(key) }
 
     private val searchField = SearchTextField().apply {
         textEditor.emptyText.text = "Filter by prefix, e.g. /app/"
@@ -105,10 +113,71 @@ class EtcdKvPanel(private val project: Project) : JPanel(BorderLayout()), EtcdTa
     }
 
     override fun onConnectionChanged(client: EtcdClient?) {
+        stopWatching()
         this.client = client
         editorPanel.setClient(client)
         tree.setClient(client, prefixFilter())
         setConnected(client != null)
+        if (client != null && liveUpdatesCheckBox.isSelected) startWatching()
+    }
+
+    /**
+     * Watches the browsed prefix and folds each event straight into the tree.
+     *
+     * Events are applied incrementally rather than by refetching, so a change somewhere else in
+     * the key space does not collapse the folder the user is working in.
+     */
+    private fun startWatching() {
+        val active = client ?: return
+        stopWatching()
+        val watchedPrefix = tree.rootPrefix
+        watch = active.watch(
+            prefix = watchedPrefix,
+            watchPrefix = true,
+            listener = object : EtcdWatchStream.Listener {
+                override fun onEvent(event: WatchEvent) = onEdt {
+                    val key = event.kv.keyText
+                    when (event.type) {
+                        WatchEventType.PUT -> tree.onKeyPut(key)
+                        WatchEventType.DELETE -> tree.onKeyDeleted(key)
+                    }
+                    editorPanel.onExternalChange(key, event.type == WatchEventType.DELETE)
+                }
+
+                override fun onClosed(error: EtcdException?) = onEdt {
+                    watch = null
+                    if (error != null && liveUpdatesCheckBox.isSelected) {
+                        // Say so rather than silently going stale, which is the whole problem
+                        // live updates exist to solve.
+                        liveUpdatesCheckBox.isSelected = false
+                        EtcdTasks.notifyWarning(
+                            project,
+                            "Live updates stopped: ${error.message}. Use Refresh to see changes.",
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    private fun stopWatching() {
+        watch?.stop()
+        watch = null
+    }
+
+    /** Whether a watch is currently feeding the tree. Used by tests to await the wiring. */
+    internal val isLiveUpdating: Boolean get() = watch?.isRunning == true
+
+    /** Narrows the browsed prefix, exactly as typing in the filter box does. */
+    internal fun setBrowsedPrefix(prefix: String) {
+        searchField.text = prefix
+    }
+
+    /** Watch callbacks arrive on the stream's reader thread; the tree must be touched on the EDT. */
+    private fun onEdt(block: () -> Unit) {
+        ApplicationManager.getApplication().invokeLater({
+            if (!project.isDisposed) block()
+        }, ModalityState.any())
     }
 
     override fun onActivated() {
@@ -137,6 +206,8 @@ class EtcdKvPanel(private val project: Project) : JPanel(BorderLayout()), EtcdTa
 
     private fun applyFilter() {
         tree.setClient(client, prefixFilter())
+        // The watch is scoped to the browsed prefix, so it has to follow the filter.
+        if (liveUpdatesCheckBox.isSelected) startWatching()
     }
 
     private fun createKey() {

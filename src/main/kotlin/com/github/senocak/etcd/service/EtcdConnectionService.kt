@@ -5,6 +5,8 @@ import com.github.senocak.etcd.settings.EtcdConnection
 import com.github.senocak.etcd.settings.EtcdCredentials
 import com.github.senocak.etcd.settings.EtcdSettingsState
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -76,9 +78,19 @@ class EtcdConnectionService(private val project: Project) : Disposable {
         client = null
     }
 
+    /**
+     * Announces a connection change on the EDT.
+     *
+     * The message bus delivers synchronously on the calling thread, and [connect] deliberately
+     * runs on a background thread — so publishing directly from there would hand every listener,
+     * all of which drive Swing, to a non-EDT thread. Dispatching here keeps that contract in the
+     * service rather than relying on each listener to remember it.
+     */
     private fun publish(newClient: EtcdClient?) {
         if (project.isDisposed) return
-        project.messageBus.syncPublisher(TOPIC).connectionChanged(newClient)
+        ApplicationManager.getApplication().invokeLater({
+            if (!project.isDisposed) project.messageBus.syncPublisher(TOPIC).connectionChanged(newClient)
+        }, ModalityState.any())
     }
 
     override fun dispose() = closeCurrent()

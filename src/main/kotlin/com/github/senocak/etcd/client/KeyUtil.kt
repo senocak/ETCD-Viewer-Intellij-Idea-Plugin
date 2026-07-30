@@ -57,18 +57,43 @@ object KeyUtil {
     }
 
     /**
-     * The immediate child segment of [key] below [prefix], plus whether the key goes deeper.
+     * The immediate child of [key] below [prefix].
      *
-     * Used to fold etcd's flat key space into a tree: for prefix `/app/` the key
-     * `/app/nodes/node-1` yields `"nodes" to true`, while `/app/name` yields `"name" to false`.
-     * Returns `null` when [key] does not sit under [prefix].
+     * Used to fold etcd's flat key space into a tree: under prefix `/app/` the key
+     * `/app/nodes/node-1` yields the folder `nodes` with child prefix `/app/nodes/`, while
+     * `/app/name` yields the leaf `name`. Returns null when [key] does not sit under [prefix].
+     *
+     * Separators directly after [prefix] are skipped, so the conventional leading `/` on etcd
+     * keys does not produce an unnamed folder above the first real segment.
      */
-    fun childSegment(prefix: String, key: String, separator: String): Pair<String, Boolean>? {
+    fun childSegment(prefix: String, key: String, separator: String): ChildSegment? {
         if (!key.startsWith(prefix) || key.length <= prefix.length) return null
-        val rest = key.substring(prefix.length)
+        var offset = prefix.length
+        if (separator.isNotEmpty()) {
+            while (offset < key.length && key.startsWith(separator, offset)) offset += separator.length
+        }
+        if (offset >= key.length) return null
+
+        val rest = key.substring(offset)
         val idx = if (separator.isEmpty()) -1 else rest.indexOf(separator)
-        return if (idx < 0) rest to false else rest.substring(0, idx) to true
+        return if (idx < 0) {
+            ChildSegment(name = rest, isFolder = false, childPrefix = key)
+        } else {
+            ChildSegment(
+                name = rest.substring(0, idx),
+                isFolder = true,
+                // Include the trailing separator so the result is a usable range prefix.
+                childPrefix = key.substring(0, offset + idx + separator.length),
+            )
+        }
     }
+
+    /**
+     * One level of the key tree.
+     *
+     * [childPrefix] is what the next range query scans; for a leaf it is simply the key.
+     */
+    data class ChildSegment(val name: String, val isFolder: Boolean, val childPrefix: String)
 
     /** Renders bytes as space-separated hex, for values that are not printable text. */
     fun toHex(bytes: ByteArray): String =

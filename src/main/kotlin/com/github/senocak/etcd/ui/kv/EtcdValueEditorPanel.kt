@@ -67,10 +67,21 @@ class EtcdValueEditorPanel(private val project: Project) : JPanel(BorderLayout()
 
     private val emptyState = EtcdUiUtil.placeholder("Select a key to view its value")
 
+    /** Warns that etcd moved on under an edit in progress, instead of discarding that edit. */
+    private val staleBanner = JBLabel().apply {
+        icon = AllIcons.General.Warning
+        border = JBUI.Borders.empty(2, 6)
+        isVisible = false
+    }
+
     init {
-        val header = JPanel(BorderLayout()).apply {
+        val titleRow = JPanel(BorderLayout()).apply {
             add(keyLabel, BorderLayout.CENTER)
             add(EtcdUiUtil.toolbar(JBLabel("View:"), viewCombo), BorderLayout.EAST)
+        }
+        val header = JPanel(BorderLayout()).apply {
+            add(titleRow, BorderLayout.CENTER)
+            add(staleBanner, BorderLayout.SOUTH)
         }
         val footer = JPanel(BorderLayout()).apply {
             add(metadataLabel, BorderLayout.CENTER)
@@ -125,10 +136,49 @@ class EtcdValueEditorPanel(private val project: Project) : JPanel(BorderLayout()
     /** Reloads the key currently displayed, if any. Used after an external change. */
     fun refresh() = current?.let { showKey(it.keyText) }
 
+    /**
+     * Responds to a watched change to [key].
+     *
+     * An untouched editor is reloaded silently so the panel simply stays current. An editor with
+     * unsaved edits is never overwritten — it gets a warning banner instead, and the existing
+     * compare-and-set on save still guards the write itself.
+     */
+    fun onExternalChange(key: String, deleted: Boolean) {
+        val shown = current ?: return
+        if (shown.keyText != key) return
+
+        if (deleted) {
+            if (isDirty()) {
+                showStale("Deleted in etcd — saving will re-create this key")
+            } else {
+                showEmpty("Key '$key' was deleted in etcd")
+            }
+            return
+        }
+        if (isDirty()) {
+            showStale("Changed in etcd — saving will ask before overwriting")
+        } else {
+            showKey(key)
+        }
+    }
+
+    /** Whether the editor holds edits that differ from the value last loaded from etcd. */
+    private fun isDirty(): Boolean {
+        val shown = current ?: return false
+        val edited = editedBytes() ?: return false
+        return !edited.contentEquals(shown.value)
+    }
+
+    private fun showStale(message: String) {
+        staleBanner.text = message
+        staleBanner.isVisible = true
+    }
+
     val displayedKey: String? get() = current?.keyText
 
     private fun showEmpty(message: String = "Select a key to view its value") {
         current = null
+        staleBanner.isVisible = false
         emptyState.isVisible = true
         emptyState.text = message
         editor.isVisible = false
@@ -161,6 +211,8 @@ class EtcdValueEditorPanel(private val project: Project) : JPanel(BorderLayout()
 
     private fun renderValue() {
         val kv = current ?: return
+        // Whatever the banner was warning about is resolved once the value is (re)rendered.
+        staleBanner.isVisible = false
         val view = viewCombo.selectedItem as? ValueView ?: ValueView.TEXT
         editor.fileType = if (view == ValueView.JSON) jsonTypeOrPlain() else plainTextType()
         editor.text = when (view) {

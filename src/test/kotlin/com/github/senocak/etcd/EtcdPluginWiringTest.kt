@@ -38,14 +38,12 @@ class EtcdPluginWiringTest : BasePlatformTestCase() {
         assertNotNull(EtcdSettingsState.getInstance())
     }
 
-    fun `test tool window panel builds every tab`() {
+    fun `test tool window shows the keys browser`() {
         val panel = EtcdToolWindowPanel(project)
         try {
-            val tabbedPane = findTabbedPane(panel)
-            assertNotNull("the tool window should contain a tabbed pane", tabbedPane)
-            assertEquals(5, tabbedPane!!.tabCount)
-            val titles = (0 until tabbedPane.tabCount).map { tabbedPane.getTitleAt(it) }
-            assertEquals(listOf("Keys", "Watch", "Leases", "Cluster", "Auth"), titles)
+            // Only the Keys section ships, so it is presented directly rather than in a tab strip.
+            assertNotNull("the tool window should contain the key browser", findKeyTree(panel))
+            assertNull("a single section needs no tab strip", findTabbedPane(panel))
         } finally {
             panel.dispose()
         }
@@ -137,6 +135,12 @@ class EtcdPluginWiringTest : BasePlatformTestCase() {
     private fun findTabbedPane(component: java.awt.Component): JTabbedPane? = when (component) {
         is JTabbedPane -> component
         is java.awt.Container -> component.components.firstNotNullOfOrNull { findTabbedPane(it) }
+        else -> null
+    }
+
+    private fun findKeyTree(component: java.awt.Component): EtcdKeyTree? = when (component) {
+        is EtcdKeyTree -> component
+        is java.awt.Container -> component.components.firstNotNullOfOrNull { findKeyTree(it) }
         else -> null
     }
 }

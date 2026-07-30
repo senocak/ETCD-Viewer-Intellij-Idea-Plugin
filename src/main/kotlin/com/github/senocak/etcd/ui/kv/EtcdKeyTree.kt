@@ -215,15 +215,19 @@ class EtcdKeyTree(
         while (true) {
             if (!parentDir.loaded) return
             val segment = KeyUtil.childSegment(parentDir.prefix, key, separator) ?: return
-            val (name, isFolder) = segment
-            if (!isFolder) {
+            if (!segment.isFolder) {
                 if (findChildKey(parent, key) == null) {
                     dropPlaceholders(parent, treeModel)
-                    insertSorted(parent, DefaultMutableTreeNode(EtcdTreeNode.Key(key, name), false), key, treeModel)
+                    insertSorted(
+                        parent,
+                        DefaultMutableTreeNode(EtcdTreeNode.Key(key, segment.name), false),
+                        key,
+                        treeModel,
+                    )
                 }
                 return
             }
-            val childPrefix = parentDir.prefix + name + separator
+            val childPrefix = segment.childPrefix
             val existing = findChildDir(parent, childPrefix)
             if (existing != null) {
                 parent = existing
@@ -231,7 +235,7 @@ class EtcdKeyTree(
                 continue
             }
             // A brand new folder: show it collapsed, and let expansion fetch its contents.
-            val newDir = EtcdTreeNode.Dir(childPrefix, name)
+            val newDir = EtcdTreeNode.Dir(childPrefix, segment.name)
             val newNode = DefaultMutableTreeNode(newDir)
             newNode.add(DefaultMutableTreeNode(EtcdTreeNode.Unloaded, false))
             dropPlaceholders(parent, treeModel)
@@ -452,18 +456,16 @@ class EtcdKeyTree(
         for (kv in kvs) {
             val key = kv.keyText
             val segment = KeyUtil.childSegment(dir.prefix, key, separator) ?: continue
-            val (name, isFolder) = segment
-            if (isFolder) {
-                val childPrefix = dir.prefix + name + separator
-                if (!existingDirs.add(childPrefix)) continue
-                val childDir = EtcdTreeNode.Dir(childPrefix, name)
+            if (segment.isFolder) {
+                if (!existingDirs.add(segment.childPrefix)) continue
+                val childDir = EtcdTreeNode.Dir(segment.childPrefix, segment.name)
                 val childNode = DefaultMutableTreeNode(childDir)
                 // A placeholder child is what makes the folder show an expand handle.
                 childNode.add(DefaultMutableTreeNode(EtcdTreeNode.Unloaded, false))
                 node.add(childNode)
             } else {
                 if (!existingKeys.add(key)) continue
-                node.add(DefaultMutableTreeNode(EtcdTreeNode.Key(key, name), false))
+                node.add(DefaultMutableTreeNode(EtcdTreeNode.Key(key, segment.name), false))
             }
         }
 
@@ -528,12 +530,14 @@ class EtcdKeyTree(
     private fun loadChildrenThen(node: DefaultMutableTreeNode, dir: EtcdTreeNode.Dir, then: () -> Unit) {
         val active = client ?: return
         val treeModel = model as DefaultTreeModel
+        // Read the page size here, on the EDT, rather than from the background lambda.
+        val limit = pageSize
         EtcdTasks.run(
             project = project,
             title = "Loading etcd keys",
             work = {
                 val (prefixKey, rangeEnd) = KeyUtil.prefixRange(dir.prefix)
-                active.kv.range(prefixKey, rangeEnd, limit = pageSize, keysOnly = true)
+                active.kv.range(prefixKey, rangeEnd, limit = limit, keysOnly = true)
             },
             onSuccess = { result ->
                 dir.loaded = true
